@@ -1,12 +1,19 @@
 #!/usr/bin/env node
+'use strict';
+
+// cc-sessions — inventory, search, and resume Claude Code sessions across every
+// environment (Terminal, VSCode, Cursor, Superset, …). Thin CLI: parse args, load the
+// session list, dispatch to a renderer. All real logic lives in ../lib.
+
 const fs = require('fs');
-const path = require('path');
-const os = require('os');
 const { spawnSync } = require('child_process');
 
-const HOME = os.homedir();
-const PROJECTS_DIR = `${HOME}/.claude/projects`;
-const SESSIONS_DIR = `${HOME}/.claude/sessions`;
+const { HOME, PROJECTS_DIR, SESSIONS_DIR, HTML_PATH } = require('../lib/config');
+const { loadRegistry } = require('../lib/registry');
+const { collect, applyFilters } = require('../lib/sessions');
+const { renderJson } = require('../lib/render/json');
+const { renderTable } = require('../lib/render/table');
+const { renderHtml } = require('../lib/render/html');
 
 const HELP = `
 cc-sessions — inventory & search Claude Code sessions
@@ -26,330 +33,88 @@ The HTML report supports live filtering and column sorting in-browser.
 Each invocation re-scans the filesystem — always shows current state.
 `;
 
-const args = process.argv.slice(2);
-const opts = {
-  limit: null, grep: null, cwdFilter: null, since: null,
-  format: 'table', resume: false,
-};
-for (let i = 0; i < args.length; i++) {
-  const a = args[i];
-  if (a === '--limit') opts.limit = parseInt(args[++i], 10);
-  else if (a === '--grep') opts.grep = args[++i];
-  else if (a === '--cwd') opts.cwdFilter = args[++i];
-  else if (a === '--since') opts.since = new Date(args[++i]);
-  else if (a === '--html') opts.format = 'html';
-  else if (a === '--json') opts.format = 'json';
-  else if (a === '--resume') opts.resume = true;
-  else if (a === '--help' || a === '-h') { console.log(HELP); process.exit(0); }
-  else { console.error(`Unknown arg: ${a}\nUse --help`); process.exit(2); }
-}
-
-function walk(dir, results = []) {
-  try {
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory()) walk(p, results);
-      else if (p.endsWith('.jsonl')) results.push(p);
+function parseArgs(argv) {
+  const opts = {
+    limit: null,
+    grep: null,
+    cwdFilter: null,
+    since: null,
+    format: 'table',
+    resume: false,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--limit') opts.limit = parseInt(argv[++i], 10);
+    else if (a === '--grep') opts.grep = argv[++i];
+    else if (a === '--cwd') opts.cwdFilter = argv[++i];
+    else if (a === '--since') opts.since = new Date(argv[++i]);
+    else if (a === '--html') opts.format = 'html';
+    else if (a === '--json') opts.format = 'json';
+    else if (a === '--resume') opts.resume = true;
+    else if (a === '--help' || a === '-h') {
+      console.log(HELP);
+      process.exit(0);
+    } else {
+      console.error(`Unknown arg: ${a}\nUse --help`);
+      process.exit(2);
     }
-  } catch {}
-  return results;
-}
-
-function parseSession(file) {
-  let cwd = null, firstPrompt = '', summary = null;
-  try {
-    const fd = fs.openSync(file, 'r');
-    const buf = Buffer.alloc(65536);
-    const bytes = fs.readSync(fd, buf, 0, 65536, 0);
-    fs.closeSync(fd);
-    const lines = buf.toString('utf8', 0, bytes).split('\n');
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let o; try { o = JSON.parse(line); } catch { continue; }
-      if (!cwd && o.cwd) cwd = o.cwd;
-      if (!summary && o.type === 'summary' && o.summary) summary = o.summary;
-      if (!firstPrompt && o.type === 'user' && o.message) {
-        const c = o.message.content;
-        let text = '';
-        if (typeof c === 'string') text = c;
-        else if (Array.isArray(c)) {
-          const t = c.find(x => x.type === 'text');
-          if (t) text = t.text;
-        }
-        if (text) {
-          const isIde = /^<(ide_selection|ide_opened_file|command-message|command-name|local-command)/.test(text);
-          if (!isIde) firstPrompt = text.replace(/\s+/g, ' ').trim();
-          else if (!firstPrompt) firstPrompt = '[IDE-launched / slash-command first turn]';
-        }
-      }
-      if (cwd && firstPrompt && summary) break;
-    }
-  } catch {}
-  return { cwd, firstPrompt: firstPrompt || '(no user prompt parsed)', summary };
-}
-
-function unsanitize(slug) {
-  // Best-effort: project dir slugs are cwd with '/' replaced by '-' and leading '-'
-  // Original dashes in dir names get conflated. Use cwd from jsonl when available.
-  if (slug.startsWith('-Users-')) {
-    return '/Users' + slug.replace('-Users', '').replace(/-/g, '/');
   }
-  return slug;
+  return opts;
 }
 
-function escapeHTML(s) {
-  return String(s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
+function main() {
+  const opts = parseArgs(process.argv.slice(2));
 
-// Process registry: ~/.claude/sessions/<pid>.json maps sessionId -> launch metadata
-// (entrypoint, live cwd, version, status). Only present for recent/live sessions —
-// older sessions have no entry, so origin falls back to "—". This reads an UNDOCUMENTED
-// Claude Code internal that may change across CC versions (observed on CC 2.1.x).
-function loadRegistry() {
-  const map = {};
-  try {
-    for (const e of fs.readdirSync(SESSIONS_DIR)) {
-      if (!e.endsWith('.json')) continue;
-      let o;
-      try { o = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, e), 'utf8')); } catch { continue; }
-      if (!o || !o.sessionId) continue;
-      const prev = map[o.sessionId];
-      if (!prev || (o.updatedAt || 0) > (prev.updatedAt || 0)) map[o.sessionId] = o;
+  const registry = loadRegistry(SESSIONS_DIR);
+  const all = collect(PROJECTS_DIR, registry);
+  const filtered = applyFilters(all, opts);
+
+  if (opts.format === 'json') {
+    console.log(renderJson(filtered));
+    return;
+  }
+
+  if (opts.format === 'html') {
+    const html = renderHtml(all, filtered);
+    fs.writeFileSync(HTML_PATH, html);
+    console.log(`Wrote ${HTML_PATH} (${filtered.length} sessions)`);
+    spawnSync('open', [HTML_PATH], { stdio: 'inherit' });
+    return;
+  }
+
+  if (opts.resume) {
+    const which = spawnSync('which', ['fzf']);
+    if (which.status !== 0) {
+      console.error('fzf not installed. Install: brew install fzf');
+      process.exit(1);
     }
-  } catch {}
-  return map;
-}
-
-// Map the raw entrypoint string to a friendly origin label.
-function originLabel(entrypoint) {
-  if (entrypoint === 'claude-vscode') return 'VSCode';
-  if (entrypoint === 'cli') return 'Terminal';
-  return entrypoint || '—';
-}
-
-const REGISTRY = loadRegistry();
-
-// Collect
-const all = [];
-for (const f of walk(PROJECTS_DIR)) {
-  const st = fs.statSync(f);
-  const slug = path.basename(path.dirname(f));
-  const uuid = path.basename(f).replace(/\.jsonl$/, '');
-  const reg = REGISTRY[uuid];
-  all.push({
-    uuid, slug,
-    mtime: st.mtime,
-    size: st.size,
-    path: f,
-    isSubagent: uuid.startsWith('agent-'),
-    origin: originLabel(reg && reg.entrypoint),
-    entrypoint: reg ? reg.entrypoint : null,
-    _parsed: false,
-  });
-}
-all.sort((a, b) => b.mtime - a.mtime);
-
-function ensureParsed(s) {
-  if (s._parsed) return;
-  const p = parseSession(s.path);
-  s.cwd = p.cwd || unsanitize(s.slug);
-  s.firstPrompt = p.firstPrompt;
-  s.summary = p.summary;
-  s._parsed = true;
-}
-
-// Filter
-let filtered = all;
-if (opts.cwdFilter) {
-  const q = opts.cwdFilter.toLowerCase();
-  filtered = filtered.filter(s => s.slug.toLowerCase().includes(q));
-}
-if (opts.since && !isNaN(opts.since.getTime())) {
-  filtered = filtered.filter(s => s.mtime >= opts.since);
-}
-if (opts.grep) {
-  const q = opts.grep.toLowerCase();
-  filtered = filtered.filter(s => {
-    ensureParsed(s);
-    return (
-      (s.firstPrompt || '').toLowerCase().includes(q) ||
-      (s.summary || '').toLowerCase().includes(q) ||
-      (s.cwd || '').toLowerCase().includes(q) ||
-      s.uuid.toLowerCase().includes(q)
+    const fzfInput = filtered
+      .map(
+        (s) =>
+          `${s.uuid}\t${s.mtime.toISOString().slice(0, 16)}\t${(s.cwd || '').replace(HOME, '~')}\t${(s.firstPrompt || '').slice(0, 120)}`
+      )
+      .join('\n');
+    const result = spawnSync(
+      'fzf',
+      [
+        '--delimiter=\t',
+        '--with-nth=2,3,4',
+        '--height=80%',
+        '--reverse',
+        '--header=Select session to resume (Enter), Esc to cancel',
+      ],
+      { input: fzfInput, encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'] }
     );
-  });
-}
-if (opts.limit && opts.limit > 0) filtered = filtered.slice(0, opts.limit);
-for (const s of filtered) ensureParsed(s);
-
-// Output
-if (opts.format === 'json') {
-  console.log(JSON.stringify(filtered.map(s => ({
-    uuid: s.uuid,
-    cwd: s.cwd,
-    mtime: s.mtime.toISOString(),
-    sizeBytes: s.size,
-    isSubagent: s.isSubagent,
-    origin: s.origin,
-    entrypoint: s.entrypoint,
-    firstPrompt: s.firstPrompt,
-    summary: s.summary,
-    path: s.path,
-    resumeCmd: `cd ${s.cwd} && claude --resume ${s.uuid}`,
-  })), null, 2));
-  process.exit(0);
-}
-
-if (opts.format === 'html') {
-  const htmlPath = `${HOME}/.claude/cc-sessions.html`;
-  const rows = filtered.map(s => {
-    const d = s.mtime.toISOString().slice(0, 16).replace('T', ' ');
-    const kb = (s.size / 1024).toFixed(0);
-    const cwd = (s.cwd || '').replace(HOME, '~');
-    const fp = (s.firstPrompt || '').slice(0, 300);
-    const sub = s.isSubagent ? ' <span class="tag">subagent</span>' : '';
-    return `<tr>
-      <td>${d}</td>
-      <td class="num">${kb}</td>
-      <td><code class="uuid">${escapeHTML(s.uuid)}</code>${sub}</td>
-      <td><span class="origin origin-${escapeHTML(s.entrypoint || 'none')}">${escapeHTML(s.origin)}</span></td>
-      <td><code>${escapeHTML(cwd)}</code></td>
-      <td class="prompt">${escapeHTML(fp)}</td>
-      <td><button onclick="copyCmd(event, '${escapeHTML(s.uuid)}', '${escapeHTML(s.cwd || '')}')">copy resume</button></td>
-    </tr>`;
-  }).join('');
-  const html = `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Claude Code Sessions</title>
-<style>
-  body { font: 14px -apple-system, BlinkMacSystemFont, sans-serif; margin: 20px; color: #222; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  .meta { color: #666; margin-bottom: 16px; font-size: 13px; }
-  #search { width: 460px; padding: 8px 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; }
-  table { border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 13px; }
-  thead { position: sticky; top: 0; background: #f5f5f5; z-index: 1; }
-  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #eee; vertical-align: top; }
-  th { cursor: pointer; user-select: none; }
-  th:hover { background: #eaeaea; }
-  tr:hover td { background: #fafafa; }
-  code { font: 12px ui-monospace, Menlo, monospace; color: #444; }
-  code.uuid { color: #777; font-size: 11px; }
-  td.num { text-align: right; }
-  td.prompt { max-width: 640px; color: #333; word-break: break-word; }
-  .tag { display: inline-block; font-size: 10px; padding: 1px 5px; background: #fff3e0; color: #e65100; border-radius: 3px; margin-left: 4px; }
-  .origin { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
-  .origin-claude-vscode { background: #e3f2fd; color: #1565c0; }
-  .origin-cli { background: #ede7f6; color: #4527a0; }
-  .origin-none { background: #f5f5f5; color: #999; }
-  button { font-size: 11px; padding: 3px 8px; cursor: pointer; border: 1px solid #ccc; border-radius: 3px; background: #fff; }
-  button:hover { background: #f0f0f0; }
-  button.copied { background: #c8e6c9; border-color: #81c784; }
-</style></head><body>
-<h1>Claude Code Sessions</h1>
-<div class="meta">${filtered.length} of ${all.length} total sessions · Generated ${new Date().toLocaleString()}</div>
-<input id="search" placeholder="Filter by uuid, cwd, first prompt..." oninput="doFilter()" autofocus>
-<table id="t">
-<thead><tr>
-  <th data-col="0" data-type="date">Modified</th>
-  <th data-col="1" data-type="num">KB</th>
-  <th data-col="2">UUID</th>
-  <th data-col="3">Origin</th>
-  <th data-col="4">CWD</th>
-  <th data-col="5">First Prompt</th>
-  <th></th>
-</tr></thead>
-<tbody>${rows}</tbody>
-</table>
-<script>
-function doFilter() {
-  const q = document.getElementById('search').value.toLowerCase();
-  for (const tr of document.querySelectorAll('#t tbody tr')) {
-    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
-  }
-}
-function copyCmd(ev, uuid, cwd) {
-  const cmd = 'cd ' + cwd + ' && claude --resume ' + uuid;
-  navigator.clipboard.writeText(cmd).then(() => {
-    const b = ev.target;
-    b.textContent = 'copied!';
-    b.classList.add('copied');
-    setTimeout(() => { b.textContent = 'copy resume'; b.classList.remove('copied'); }, 1500);
-  });
-}
-const sortDir = {};
-document.querySelectorAll('th[data-col]').forEach(th => {
-  th.addEventListener('click', () => {
-    const col = +th.dataset.col;
-    const type = th.dataset.type || 'str';
-    const dir = sortDir[col] = !sortDir[col];
-    const tbody = document.querySelector('#t tbody');
-    const rows = Array.from(tbody.querySelectorAll('tr'));
-    rows.sort((a, b) => {
-      let av = a.children[col].textContent, bv = b.children[col].textContent;
-      if (type === 'num') return (dir ? 1 : -1) * (parseFloat(av) - parseFloat(bv));
-      return (dir ? 1 : -1) * av.localeCompare(bv);
-    });
-    for (const r of rows) tbody.appendChild(r);
-  });
-});
-</script>
-</body></html>`;
-  fs.writeFileSync(htmlPath, html);
-  console.log(`Wrote ${htmlPath} (${filtered.length} sessions)`);
-  spawnSync('open', [htmlPath], { stdio: 'inherit' });
-  process.exit(0);
-}
-
-if (opts.resume) {
-  const which = spawnSync('which', ['fzf']);
-  if (which.status !== 0) {
-    console.error('fzf not installed. Install: brew install fzf');
-    process.exit(1);
-  }
-  const fzfInput = filtered.map(s =>
-    `${s.uuid}\t${s.mtime.toISOString().slice(0, 16)}\t${(s.cwd || '').replace(HOME, '~')}\t${(s.firstPrompt || '').slice(0, 120)}`
-  ).join('\n');
-  const result = spawnSync('fzf', [
-    '--delimiter=\t', '--with-nth=2,3,4', '--height=80%', '--reverse',
-    '--header=Select session to resume (Enter), Esc to cancel',
-  ], { input: fzfInput, encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'] });
-  if (result.stdout && result.stdout.trim()) {
-    const uuid = result.stdout.split('\t')[0];
-    const session = filtered.find(s => s.uuid === uuid);
-    if (session) {
-      console.log(`cd ${session.cwd} && claude --resume ${uuid}`);
+    if (result.stdout && result.stdout.trim()) {
+      const uuid = result.stdout.split('\t')[0];
+      const session = filtered.find((s) => s.uuid === uuid);
+      if (session) console.log(`cd ${session.cwd} && claude --resume ${uuid}`);
     }
+    return;
   }
-  process.exit(0);
+
+  // Default: terminal table
+  console.log(renderTable(all, filtered));
 }
 
-// Default: terminal table
-console.log(`${all.length} sessions total; showing ${filtered.length}.\n`);
-const W = { date: 16, kb: 7, uuid: 36, origin: 8, cwd: 50 };
-const header =
-  'Modified'.padEnd(W.date) + '  ' +
-  'KB'.padStart(W.kb) + '  ' +
-  'UUID'.padEnd(W.uuid) + '  ' +
-  'Origin'.padEnd(W.origin) + '  ' +
-  'CWD'.padEnd(W.cwd) + '  ' +
-  'First Prompt';
-console.log(header);
-console.log('-'.repeat(header.length));
-for (const s of filtered) {
-  const d = s.mtime.toISOString().slice(0, 16).replace('T', ' ');
-  const kb = (s.size / 1024).toFixed(0);
-  const cwd = (s.cwd || '').replace(HOME, '~');
-  const cwdTrunc = cwd.length > W.cwd ? cwd.slice(0, W.cwd - 1) + '…' : cwd;
-  const fp = (s.firstPrompt || '').slice(0, 80);
-  console.log(
-    d.padEnd(W.date) + '  ' +
-    kb.padStart(W.kb) + '  ' +
-    s.uuid.padEnd(W.uuid) + '  ' +
-    s.origin.padEnd(W.origin) + '  ' +
-    cwdTrunc.padEnd(W.cwd) + '  ' +
-    fp
-  );
-}
-console.log('\nResume:  cd <CWD> && claude --resume <UUID>');
-console.log('More:    cc-sessions --help');
+main();
