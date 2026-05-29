@@ -73,7 +73,7 @@ Each invocation re-scans the filesystem, so it always reflects current state.
 | 2 | **`~/.<tool>/` cwd heuristic** | a session running under `~/.superset/…` → **Superset**; catches any CLI-wrapping orchestrator following the convention |
 | 3 | **Known entrypoint** | `cli` → **Terminal**, `claude-vscode` → **VSCode** |
 | 4 | **Unknown entrypoint, auto-labeled** | `claude-jetbrains` → **Jetbrains** (new editor integrations work with zero changes) |
-| 5 | **Unknown** | `—` (older sessions whose process metadata has been cleaned up) |
+| 5 | **Unknown** | `—` (sessions whose Claude Code process has exited — the registry entry is a liveness marker, so a closed session has none) |
 
 **Honest limitation:** a tool that launches the Claude Code *CLI* from an ordinary directory, with no distinguishing path, leaves no signal separating it from a plain terminal. There's nothing to detect — so for that case, add a rule.
 

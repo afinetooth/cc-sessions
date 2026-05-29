@@ -32,7 +32,11 @@ Isolated in [`../lib/transcript.js`](../lib/transcript.js).
 
 ## 2. Process registry — `sessions/<pid>.json`
 
-A small JSON file per live/recent Claude Code process. Fields we read:
+A **liveness marker** — one JSON file per Claude Code process that is *currently running*
+(like a PID/lock file). It is created when a process starts and removed when that process
+exits; it is **not** aged out or pruned on a timer. (Verified: every registry file on a test
+machine corresponded to a live `claude` PID, including sessions idle for weeks; many *recent*
+but closed sessions had none.) Fields we read:
 
 - **`sessionId`** — joins a registry entry to a transcript UUID.
 - **`entrypoint`** — the launch surface. Observed values: `cli`, `claude-vscode`. This is the
@@ -43,9 +47,12 @@ A small JSON file per live/recent Claude Code process. Fields we read:
   first cwd; reflects worktrees the session moved into). Used for the resume command.
 - **`updatedAt`** — to pick the freshest entry when a session has been reopened under a new pid.
 
-**Lifecycle caveat:** these files are pruned over time, so older sessions have no registry
-entry. Origin then degrades gracefully to the path heuristic or `—`. Isolated in
-[`../lib/registry.js`](../lib/registry.js).
+**Lifecycle caveat:** because the file exists only while the process is alive, a session that
+has been **closed** has no registry entry — and since `entrypoint` lives *only* here (never in
+the transcript), a closed session's launch origin is unrecoverable from this source. Origin
+then degrades gracefully to the durable cwd-path heuristic, or `—`. This is why a tool wanting
+to *remember* origin must snapshot it while the process is live (see the README roadmap).
+Isolated in [`../lib/registry.js`](../lib/registry.js).
 
 ---
 
