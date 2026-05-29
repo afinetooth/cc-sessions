@@ -20,6 +20,7 @@ const CFG = path.join(ROOT, '.claude');
 const PROJECTS = path.join(CFG, 'projects');
 const SESSIONS = path.join(CFG, 'sessions');
 const RULES_FILE = path.join(ROOT, 'rules.json');
+const CACHE_FILE = path.join(ROOT, 'origins-cache.json');
 
 // ── fixture builders ───────────────────────────────────────────────────────────
 function reset() {
@@ -48,7 +49,8 @@ function makeSession({ uuid, cwd, content, entrypoint, liveCwd, pid }) {
 
 function run(extraEnv) {
   const out = execFileSync('node', [BIN, '--json'], {
-    env: { ...process.env, CLAUDE_CONFIG_DIR: CFG, ...extraEnv },
+    // Sandbox the cache to a temp file so tests never touch the real ~/.config cache.
+    env: { ...process.env, CLAUDE_CONFIG_DIR: CFG, CC_SESSIONS_CACHE: CACHE_FILE, ...extraEnv },
     encoding: 'utf8',
   });
   return JSON.parse(out);
@@ -113,6 +115,19 @@ makeSession({
 makeSession({ uuid: 'u-acme', cwd: HOME + '/acme-thing', entrypoint: 'cli', content: 'Acme work' });
 fs.writeFileSync(RULES_FILE, JSON.stringify([{ label: 'Acme', slugMatch: 'acme' }]));
 
+// 9. Fingerprint: no registry, ordinary cwd, but transcript has an IDE marker -> "IDE" (inferred).
+makeSession({
+  uuid: 'u-ide',
+  cwd: HOME + '/work/proj-ide',
+  content: [
+    { type: 'text', text: '<ide_opened_file>opened bar.ts</ide_opened_file>' },
+    { type: 'text', text: 'do a thing' },
+  ],
+});
+
+// 10. Cache: live cli session (Terminal). After it "closes", origin must persist from cache.
+makeSession({ uuid: 'u-cacheme', cwd: HOME + '/work/proj-cache', entrypoint: 'cli', content: 'cache me' });
+
 // ── run + assert ───────────────────────────────────────────────────────────────
 console.log('origin detection:');
 const byId = Object.fromEntries(run({ CC_SESSIONS_RULES: RULES_FILE }).map((s) => [s.uuid, s]));
@@ -135,6 +150,20 @@ ok(
   byId['u-live'].resumeCmd === `cd ${HOME}/work/proj-g/.claude/worktrees/feature && claude --resume u-live`,
   'resumeCmd=' + byId['u-live'].resumeCmd
 );
+
+console.log('transcript fingerprint:');
+eq('inferred origin source flagged', byId['u-ide'].originSource, 'inferred');
+eq('inferred -> IDE label', byId['u-ide'].origin, 'IDE');
+eq('plain terminal not mislabeled IDE', byId['u-terminal'].origin, 'Terminal');
+
+console.log('origin persistence cache:');
+eq('live session is Terminal (source=entrypoint)', byId['u-cacheme'].origin, 'Terminal');
+eq('  ...sourced live', byId['u-cacheme'].originSource, 'entrypoint');
+// Simulate closing the session: delete its registry entry, then re-read.
+fs.rmSync(path.join(SESSIONS, 'u-cacheme.json'));
+const afterClose = Object.fromEntries(run({ CC_SESSIONS_RULES: RULES_FILE }).map((s) => [s.uuid, s]));
+eq('closed session keeps origin via cache', afterClose['u-cacheme'].origin, 'Terminal');
+eq('  ...now sourced from cache', afterClose['u-cacheme'].originSource, 'cache');
 
 console.log('without user rules (precedence sanity):');
 const noRules = Object.fromEntries(run({ CC_SESSIONS_RULES: path.join(ROOT, 'none.json') }).map((s) => [s.uuid, s]));

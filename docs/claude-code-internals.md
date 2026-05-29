@@ -50,8 +50,10 @@ but closed sessions had none.) Fields we read:
 **Lifecycle caveat:** because the file exists only while the process is alive, a session that
 has been **closed** has no registry entry — and since `entrypoint` lives *only* here (never in
 the transcript), a closed session's launch origin is unrecoverable from this source. Origin
-then degrades gracefully to the durable cwd-path heuristic, or `—`. This is why a tool wanting
-to *remember* origin must snapshot it while the process is live (see the README roadmap).
+then degrades gracefully to the durable cwd-path heuristic, the persisted origin cache, the
+transcript fingerprint, or `—`. Because of this, cc-sessions snapshots each live session's
+origin into `~/.config/cc-sessions/origins.json` *while the process is alive* (see README →
+"Why origin needs a cache"), so a closed session keeps its real origin.
 Isolated in [`../lib/registry.js`](../lib/registry.js).
 
 ---

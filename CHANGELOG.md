@@ -6,6 +6,24 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-29
+
+### Added
+- **Origin persistence cache** (`~/.config/cc-sessions/origins.json`, override `$CC_SESSIONS_CACHE`):
+  on every run, the origin of each currently-live session is snapshotted, so a session keeps its
+  real origin after its process exits (the registry `entrypoint` is liveness-only and never stored
+  in the transcript).
+- **Transcript fingerprint**: closed sessions with `<ide_opened_file>`/`<ide_selection>` markers are
+  inferred as **IDE**, shown distinctly (faded/italic, trailing `?`/`*`) so a guess never reads as fact.
+- **`originSource`** field in `--json` (`user-rule` | `path` | `entrypoint` | `cache` | `inferred` |
+  `none`) — every origin says how it was determined.
+
+### Changed
+- Origin resolution is now a 6-layer ladder: user rules → `~/.<tool>/` path → live entrypoint →
+  cache → transcript fingerprint → `—`.
+- Docs corrected: the process registry is a **liveness marker** (one file per running process,
+  removed on exit), not "pruned over time".
+
 ## [0.1.0] - 2026-05-29
 
 First public release.
@@ -29,5 +47,6 @@ First public release.
   (`lib/transcript.js`, `lib/registry.js`); see `docs/claude-code-internals.md`.
 - Zero-dependency integration test suite (`test/run.js`).
 
-[Unreleased]: https://github.com/afinetooth/cc-sessions/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/afinetooth/cc-sessions/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/afinetooth/cc-sessions/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/afinetooth/cc-sessions/releases/tag/v0.1.0
