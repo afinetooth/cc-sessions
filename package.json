@@ -1,0 +1,32 @@
+{
+  "name": "cc-sessions",
+  "version": "0.1.0",
+  "description": "Cross-environment browser for your Claude Code sessions — inventory, find, and resume sessions from Terminal, VSCode, Cursor, Superset, and more, all in one place.",
+  "bin": {
+    "cc-sessions": "bin/cc-sessions"
+  },
+  "type": "commonjs",
+  "engines": {
+    "node": ">=16"
+  },
+  "license": "MIT",
+  "author": "James Kessler <afinetooth@gmail.com>",
+  "keywords": [
+    "claude-code",
+    "claude",
+    "anthropic",
+    "sessions",
+    "resume",
+    "cli"
+  ],
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node test/run.js"
+  }
+}

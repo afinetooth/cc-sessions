@@ -1,0 +1,15 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Local scratch / generated reports
+*.bak
+cc-sessions.html
+/tmp/
