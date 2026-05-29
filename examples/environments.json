@@ -1,0 +1,9 @@
+[
+  {
+    "_comment": "Copy this to ~/.config/cc-sessions/environments.json (or point $CC_SESSIONS_RULES at it). Each rule maps a session to an Origin label. A rule matches when ALL of its provided conditions match; the FIRST matching rule wins, and user rules are evaluated before the built-in heuristics — so you can both add new tools and override cc-sessions' guesses. Conditions: cwdMatch (regex vs the session's working dir), slugMatch (regex vs the project-dir slug), entrypoint (exact match vs the registry entrypoint). Keys starting with _ are ignored."
+  },
+  { "label": "Cursor", "cwdMatch": "/\\.cursor/" },
+  { "label": "Windsurf", "cwdMatch": "/\\.windsurf/" },
+  { "label": "Acme Internal", "slugMatch": "acme-worktrees" },
+  { "label": "MyOrchestrator", "entrypoint": "claude-myorchestrator" }
+]

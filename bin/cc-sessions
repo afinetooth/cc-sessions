@@ -108,7 +108,7 @@ function main() {
     if (result.stdout && result.stdout.trim()) {
       const uuid = result.stdout.split('\t')[0];
       const session = filtered.find((s) => s.uuid === uuid);
-      if (session) console.log(`cd ${session.cwd} && claude --resume ${uuid}`);
+      if (session) console.log(`cd ${session.resumeCwd || session.cwd} && claude --resume ${uuid}`);
     }
     return;
   }
