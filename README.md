@@ -63,6 +63,8 @@ cc-sessions --help                Help
 
 Each invocation re-scans the filesystem, so it always reflects current state.
 
+In the HTML report, every row has two copy buttons: **copy resume** (a `cd … && claude --resume <uuid>` command for the terminal) and **copy vscode** (a `vscode://anthropic.claude-code/open?session=<uuid>` deep link that opens the session in the VS Code extension — open the session's project folder in VS Code first, since the extension scopes sessions to the open workspace).
+
 ## Origin detection
 
 `cc-sessions` figures out which environment launched a session using general signals — not a hardcoded list. Resolution is layered; the **first match wins**:
@@ -71,21 +73,22 @@ Each invocation re-scans the filesystem, so it always reflects current state.
 |------:|--------|----------|----------|
 | 1 | **Your rules** (`~/.config/cc-sessions/environments.json`) | `user-rule` | anything you define — evaluated first, so you can override the rest |
 | 2 | **`~/.<tool>/` cwd heuristic** | `path` | a session running under `~/.superset/…` → **Superset**; catches any CLI-wrapping orchestrator following the convention |
-| 3 | **Live entrypoint** | `entrypoint` | `cli` → **Terminal**, `claude-vscode` → **VSCode**; unknown `claude-jetbrains` → **Jetbrains** (new integrations work with zero changes) |
-| 4 | **Remembered (cache)** | `cache` | a now-closed session whose origin was snapshotted while it was live — see below |
-| 5 | **Inferred (transcript markers)** | `inferred` | a closed session with `<ide_opened_file>` markers → **IDE** *(a guess — shown faded/italic with a `?`)* |
-| 6 | **Unknown** | `none` | `—` (no live process, no path, never cached, no markers) |
+| 3 | **Launch entrypoint** (read from the transcript — durable) | `entrypoint` | `cli` → **Terminal**, `claude-vscode` → **VSCode**; unknown `claude-jetbrains` → **Jetbrains** (new integrations work with zero changes) |
+| 4 | **Inferred** (transcript IDE markers) | `inferred` | a pre-entrypoint transcript with `<ide_opened_file>` → **IDE** *(a guess — shown faded/italic with a `?`)* |
+| 5 | **Unknown** | `none` | `—` (no path, no entrypoint stamp, no markers — only the very oldest transcripts) |
 
 Every row carries a machine-readable `source` in `--json`, so you always know *how* an origin was determined — and inferred guesses never masquerade as authoritative.
 
-### Why origin needs a cache (and what "inferred" means)
+### Durable origin, and "last opened in"
 
-The launch `entrypoint` (Terminal vs VSCode) is a **liveness signal**: Claude Code keeps it in a per-process file that exists only while the session is running, and it is **never written into the transcript**. So when you close a session, its entrypoint is gone for good. Two mechanisms keep origin from vanishing:
+The launch `entrypoint` is **stamped into the transcript** and accumulates across resumes, so origin **survives a session closing — no cache required.** cc-sessions reads:
 
-- **Cache (authoritative).** Every run, cc-sessions snapshots the origin of every *currently-live* session into `~/.config/cc-sessions/origins.json`. A session closed *after* cc-sessions has seen it keeps its real origin forever. (Limit: only sessions observed while live can be remembered — so run it now and then to capture your open sessions.)
-- **Inferred fingerprint.** For sessions closed *before* they were ever cached, the durable `<ide_opened_file>`/`<ide_selection>` markers in the transcript infer **IDE** (`source: inferred`). It's shown distinctly because it's a guess, not the registry's word.
+- the **first** stamp → `origin` (where the session was *born*), and
+- the **last** stamp → `lastOpenedIn` (where it was *most recently* opened — your best resume target).
 
-**Honest limitation:** a tool that launches the *CLI* from an ordinary directory, never cached and with no markers, leaves no signal separating it from a plain terminal — those stay `—`. For that case, add a rule. Set `$CC_SESSIONS_CACHE` to relocate the cache file.
+When those differ, the session **moved environments** (e.g. born in Terminal, last opened in VSCode): the HTML flags it with a small `→ VSCode`, and `--json` sets `movedEnvironments: true`.
+
+**Inferred fallback.** The only sessions without a stamp are transcripts older than when Claude Code began recording it. If such a transcript has `<ide_opened_file>` markers, origin is inferred as **IDE** (`source: inferred`, shown distinctly); otherwise it stays `—`. (On a real 87-session machine this was just **2** sessions.)
 
 ### Adding your own environments
 

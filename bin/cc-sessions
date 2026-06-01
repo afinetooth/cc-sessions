@@ -10,8 +10,7 @@ const { spawnSync } = require('child_process');
 
 const { HOME, PROJECTS_DIR, SESSIONS_DIR, HTML_PATH } = require('../lib/config');
 const { loadRegistry } = require('../lib/registry');
-const { collect, applyFilters, captureLiveOrigins } = require('../lib/sessions');
-const { saveCache } = require('../lib/cache');
+const { collect, applyFilters } = require('../lib/sessions');
 const { renderJson } = require('../lib/render/json');
 const { renderTable } = require('../lib/render/table');
 const { renderHtml } = require('../lib/render/html');
@@ -68,11 +67,6 @@ function main() {
 
   const registry = loadRegistry(SESSIONS_DIR);
   const all = collect(PROJECTS_DIR, registry);
-
-  // Persist the origin of currently-live sessions before they close (their entrypoint is
-  // a liveness signal that vanishes on exit). Runs on every invocation, all formats.
-  saveCache(captureLiveOrigins(all, new Date().toISOString()));
-
   const filtered = applyFilters(all, opts);
 
   if (opts.format === 'json') {
