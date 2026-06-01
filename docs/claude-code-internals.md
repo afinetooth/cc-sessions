@@ -27,6 +27,12 @@ Each session is a JSON-lines file. The pieces we read:
   wrapper instead of what the user typed — and so wouldn't match the launching tool's menu.
 - **`type: "summary"` lines** (when present) — an optional title. Rarely present in practice,
   so the first-user-message label is the common path.
+- **`entrypoint`** — the launch surface (`cli`, `claude-vscode`, …), stamped on transcript
+  lines and **accumulating across resumes**. The **first** occurrence is the session's birth
+  surface (`origin`); the **last** occurrence is the most recent one (`lastOpenedIn`). Because
+  it lives in the transcript, origin is **durable** — it survives the session closing. We read
+  the first from the head and the last from the tail (it sits at the very end of long files).
+  This is the primary origin signal.
 
 Isolated in [`../lib/transcript.js`](../lib/transcript.js).
 
@@ -39,21 +45,21 @@ machine corresponded to a live `claude` PID, including sessions idle for weeks; 
 but closed sessions had none.) Fields we read:
 
 - **`sessionId`** — joins a registry entry to a transcript UUID.
-- **`entrypoint`** — the launch surface. Observed values: `cli`, `claude-vscode`. This is the
-  most direct origin signal. **Caveat:** tools that wrap the CLI (e.g. Superset) inherit
-  `entrypoint: "cli"`, so entrypoint alone can't distinguish them from a plain terminal — see
-  the `~/.<tool>/` path heuristic in [`../lib/environments.js`](../lib/environments.js).
+- **`entrypoint`** — the launch surface (`cli`, `claude-vscode`). This is the *live/current*
+  copy of the same value the transcript stamps; we use it only as a fallback to the transcript.
+  **Caveat:** tools that wrap the CLI (e.g. Superset) inherit `entrypoint: "cli"`, so entrypoint
+  alone can't distinguish them from a plain terminal — that's what the `~/.<tool>/` path
+  heuristic in [`../lib/environments.js`](../lib/environments.js) is for.
 - **`cwd`** — the session's *current* working directory (more up to date than the transcript's
   first cwd; reflects worktrees the session moved into). Used for the resume command.
 - **`updatedAt`** — to pick the freshest entry when a session has been reopened under a new pid.
 
-**Lifecycle caveat:** because the file exists only while the process is alive, a session that
-has been **closed** has no registry entry — and since `entrypoint` lives *only* here (never in
-the transcript), a closed session's launch origin is unrecoverable from this source. Origin
-then degrades gracefully to the durable cwd-path heuristic, the persisted origin cache, the
-transcript fingerprint, or `—`. Because of this, cc-sessions snapshots each live session's
-origin into `~/.config/cc-sessions/origins.json` *while the process is alive* (see README →
-"Why origin needs a cache"), so a closed session keeps its real origin.
+**Lifecycle caveat:** the registry file exists only while the process is alive, so a **closed**
+session has no entry. That is fine for origin, because `entrypoint` is *also* stamped durably in
+the transcript (above) — the registry is only needed for the live `cwd` (resume target) and for
+knowing a session is currently running. Earlier versions of cc-sessions wrongly assumed
+entrypoint lived *only* here and added a persistence cache; that was removed in v0.3 once the
+transcript stamp was found to be durable.
 Isolated in [`../lib/registry.js`](../lib/registry.js).
 
 ---

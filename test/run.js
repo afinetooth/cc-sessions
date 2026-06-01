@@ -2,11 +2,12 @@
 'use strict';
 
 // Integration test: build a synthetic CLAUDE_CONFIG_DIR (transcripts + process registry),
-// run the real CLI against it, and assert origin detection, the first-prompt wrapper-skip,
-// user-rule override/precedence, and live-cwd resume. No deps, no network.
+// run the real CLI against it, and assert origin detection, transcript-entrypoint recovery
+// for closed sessions, first/last entrypoint ("moved environments"), the first-prompt
+// wrapper-skip, the IDE fingerprint, user-rule precedence, and live-cwd resume. No deps.
 //
-// Note: fixtures are generated at run time using the real os.homedir(), so the ~/.<tool>/
-// path heuristic (which keys off the same home) matches naturally without env spoofing.
+// Fixtures are generated using the real os.homedir() so the ~/.<tool>/ path heuristic
+// matches naturally without env spoofing.
 
 const fs = require('fs');
 const os = require('os');
@@ -20,43 +21,44 @@ const CFG = path.join(ROOT, '.claude');
 const PROJECTS = path.join(CFG, 'projects');
 const SESSIONS = path.join(CFG, 'sessions');
 const RULES_FILE = path.join(ROOT, 'rules.json');
-const CACHE_FILE = path.join(ROOT, 'origins-cache.json');
 
-// ── fixture builders ───────────────────────────────────────────────────────────
 function reset() {
   fs.rmSync(ROOT, { recursive: true, force: true });
   fs.mkdirSync(PROJECTS, { recursive: true });
   fs.mkdirSync(SESSIONS, { recursive: true });
 }
+const slugFor = (cwd) => cwd.replace(/\//g, '-');
 
-function slugFor(cwd) {
-  return cwd.replace(/\//g, '-');
-}
-
-// Write a transcript and (optionally) a registry entry for one session.
-function makeSession({ uuid, cwd, content, entrypoint, liveCwd, pid }) {
+// Write a transcript (with optional entrypoint stamps that accumulate across "resumes") and,
+// optionally, a live registry entry. registryEntrypoint set => the session is "live".
+function makeSession({ uuid, cwd, content, registryEntrypoint, transcriptEntrypoints, liveCwd, pid }) {
   const dir = path.join(PROJECTS, slugFor(cwd));
   fs.mkdirSync(dir, { recursive: true });
-  const line = JSON.stringify({ type: 'user', cwd, message: { role: 'user', content } });
-  fs.writeFileSync(path.join(dir, uuid + '.jsonl'), line + '\n');
-  if (entrypoint) {
+  const eps = transcriptEntrypoints || [];
+  const lines = [];
+  const first = { type: 'user', cwd, message: { role: 'user', content } };
+  if (eps[0]) first.entrypoint = eps[0];
+  lines.push(JSON.stringify(first));
+  for (let i = 1; i < eps.length; i++) {
+    lines.push(JSON.stringify({ type: 'assistant', cwd, entrypoint: eps[i], message: { role: 'assistant', content: 'ok' } }));
+  }
+  fs.writeFileSync(path.join(dir, uuid + '.jsonl'), lines.join('\n') + '\n');
+  if (registryEntrypoint) {
     fs.writeFileSync(
       path.join(SESSIONS, (pid || uuid) + '.json'),
-      JSON.stringify({ sessionId: uuid, entrypoint, cwd: liveCwd || cwd, updatedAt: 1 })
+      JSON.stringify({ sessionId: uuid, entrypoint: registryEntrypoint, cwd: liveCwd || cwd, updatedAt: 1 })
     );
   }
 }
 
 function run(extraEnv) {
   const out = execFileSync('node', [BIN, '--json'], {
-    // Sandbox the cache to a temp file so tests never touch the real ~/.config cache.
-    env: { ...process.env, CLAUDE_CONFIG_DIR: CFG, CC_SESSIONS_CACHE: CACHE_FILE, ...extraEnv },
+    env: { ...process.env, CLAUDE_CONFIG_DIR: CFG, ...extraEnv },
     encoding: 'utf8',
   });
   return JSON.parse(out);
 }
 
-// ── assertions ───────────────────────────────────────────────────────────────────
 let pass = 0;
 let fail = 0;
 function eq(name, got, want) {
@@ -68,108 +70,92 @@ function eq(name, got, want) {
     console.log('  ✗ ' + name + '\n      got:  ' + JSON.stringify(got) + '\n      want: ' + JSON.stringify(want));
   }
 }
-function ok(name, cond, detail) {
-  eq(name, !!cond, true);
-  if (!cond && detail) console.log('      ' + detail);
-}
 
-// ── fixtures ───────────────────────────────────────────────────────────────────
 reset();
 
-// 1. Terminal: cli entrypoint, ordinary cwd, plain string prompt.
-makeSession({ uuid: 'u-terminal', cwd: HOME + '/work/proj-a', entrypoint: 'cli', content: 'Fix the failing test' });
+// 1. Closed Terminal session — NO registry, entrypoint only in the transcript (the v0.3 win).
+makeSession({ uuid: 'u-term', cwd: HOME + '/work/a', transcriptEntrypoints: ['cli'], content: 'Fix the test' });
 
-// 2. VSCode: claude-vscode, wrapper block THEN real prompt in a separate block.
+// 2. VSCode, with a wrapper block before the real prompt (tests wrapper-skip too).
 makeSession({
   uuid: 'u-vscode',
-  cwd: HOME + '/work/proj-b',
-  entrypoint: 'claude-vscode',
+  cwd: HOME + '/work/b',
+  transcriptEntrypoints: ['claude-vscode'],
   content: [
-    { type: 'text', text: '<ide_opened_file>The user opened foo.ts</ide_opened_file>' },
+    { type: 'text', text: '<ide_opened_file>opened foo.ts</ide_opened_file>' },
     { type: 'text', text: 'Add a logout button' },
   ],
 });
 
-// 3. Superset: cli entrypoint BUT cwd under ~/.superset/ — path heuristic must beat cli.
-makeSession({ uuid: 'u-superset', cwd: HOME + '/.superset/worktrees/proj-c', entrypoint: 'cli', content: 'Refactor the parser' });
+// 3. Superset — transcript entrypoint cli, but ~/.superset/ path wins.
+makeSession({ uuid: 'u-superset', cwd: HOME + '/.superset/worktrees/c', transcriptEntrypoints: ['cli'], content: 'Refactor' });
 
-// 4. Cursor: seed rule (cwdMatch /\.cursor/) — cwd under ~/.cursor/.
-makeSession({ uuid: 'u-cursor', cwd: HOME + '/.cursor/worktrees/proj-d', entrypoint: 'cli', content: 'Tweak styles' });
+// 4. Cursor — seed rule (cwdMatch /\.cursor/).
+makeSession({ uuid: 'u-cursor', cwd: HOME + '/.cursor/worktrees/d', transcriptEntrypoints: ['cli'], content: 'Styles' });
 
-// 5. Unknown entrypoint: claude-jetbrains -> auto-prettify "Jetbrains".
-makeSession({ uuid: 'u-jb', cwd: HOME + '/work/proj-e', entrypoint: 'claude-jetbrains', content: 'Hello' });
+// 5. Unknown entrypoint -> auto-prettify "Jetbrains".
+makeSession({ uuid: 'u-jb', cwd: HOME + '/work/e', transcriptEntrypoints: ['claude-jetbrains'], content: 'Hi' });
 
-// 6. No registry entry at all -> Unknown "—".
-makeSession({ uuid: 'u-orphan', cwd: HOME + '/work/proj-f', content: 'Old session' });
-
-// 7. Live cwd: registry cwd differs from transcript cwd -> resume targets the live cwd.
+// 6. Ancient transcript: no entrypoint stamp at all, but an IDE marker -> "IDE" (inferred).
 makeSession({
-  uuid: 'u-live',
-  cwd: HOME + '/work/proj-g',
-  entrypoint: 'cli',
-  liveCwd: HOME + '/work/proj-g/.claude/worktrees/feature',
-  content: 'Work in a worktree',
+  uuid: 'u-ancient',
+  cwd: HOME + '/work/f',
+  content: [{ type: 'text', text: '<ide_opened_file>x</ide_opened_file>' }, { type: 'text', text: 'old one' }],
 });
 
-// 8. User-rule override: cli + ordinary cwd whose slug contains "acme" -> rule wins over Terminal.
-makeSession({ uuid: 'u-acme', cwd: HOME + '/acme-thing', entrypoint: 'cli', content: 'Acme work' });
+// 7. No signal at all -> "—".
+makeSession({ uuid: 'u-none', cwd: HOME + '/work/g', content: 'nothing to go on' });
+
+// 8. User-rule override beats the entrypoint.
+makeSession({ uuid: 'u-acme', cwd: HOME + '/acme-thing', transcriptEntrypoints: ['cli'], content: 'Acme' });
 fs.writeFileSync(RULES_FILE, JSON.stringify([{ label: 'Acme', slugMatch: 'acme' }]));
 
-// 9. Fingerprint: no registry, ordinary cwd, but transcript has an IDE marker -> "IDE" (inferred).
+// 9. Moved environments: born in cli, last opened in VSCode.
+makeSession({ uuid: 'u-moved', cwd: HOME + '/work/h', transcriptEntrypoints: ['cli', 'claude-vscode'], content: 'moved' });
+
+// 10. Live-cwd resume: registry cwd differs from transcript cwd.
 makeSession({
-  uuid: 'u-ide',
-  cwd: HOME + '/work/proj-ide',
-  content: [
-    { type: 'text', text: '<ide_opened_file>opened bar.ts</ide_opened_file>' },
-    { type: 'text', text: 'do a thing' },
-  ],
+  uuid: 'u-live',
+  cwd: HOME + '/work/i',
+  transcriptEntrypoints: ['cli'],
+  registryEntrypoint: 'cli',
+  liveCwd: HOME + '/work/i/.claude/worktrees/feature',
+  content: 'live',
 });
 
-// 10. Cache: live cli session (Terminal). After it "closes", origin must persist from cache.
-makeSession({ uuid: 'u-cacheme', cwd: HOME + '/work/proj-cache', entrypoint: 'cli', content: 'cache me' });
-
-// ── run + assert ───────────────────────────────────────────────────────────────
-console.log('origin detection:');
 const byId = Object.fromEntries(run({ CC_SESSIONS_RULES: RULES_FILE }).map((s) => [s.uuid, s]));
 
-eq('terminal -> Terminal', byId['u-terminal'].origin, 'Terminal');
+console.log('origin detection (durable, from the transcript):');
+eq('closed terminal recovered -> Terminal', byId['u-term'].origin, 'Terminal');
+eq('  ...source is entrypoint (not cache/none)', byId['u-term'].originSource, 'entrypoint');
 eq('vscode -> VSCode', byId['u-vscode'].origin, 'VSCode');
-eq('superset (cli+path) -> Superset (path beats cli)', byId['u-superset'].origin, 'Superset');
-eq('cursor (seed rule) -> Cursor', byId['u-cursor'].origin, 'Cursor');
-eq('unknown entrypoint -> prettified', byId['u-jb'].origin, 'Jetbrains');
-eq('no registry -> Unknown', byId['u-orphan'].origin, '—');
+eq('superset (path beats entrypoint)', byId['u-superset'].origin, 'Superset');
+eq('cursor (seed rule)', byId['u-cursor'].origin, 'Cursor');
+eq('unknown entrypoint prettified', byId['u-jb'].origin, 'Jetbrains');
+eq('no signal -> —', byId['u-none'].origin, '—');
 eq('user rule overrides entrypoint', byId['u-acme'].origin, 'Acme');
 
 console.log('first-prompt wrapper skip:');
-eq('vscode first prompt = real typed text', byId['u-vscode'].firstPrompt, 'Add a logout button');
-eq('terminal first prompt = plain text', byId['u-terminal'].firstPrompt, 'Fix the failing test');
+eq('vscode first prompt = typed text', byId['u-vscode'].firstPrompt, 'Add a logout button');
 
-console.log('live-cwd resume:');
-ok(
-  'resume targets live cwd, not transcript cwd',
-  byId['u-live'].resumeCmd === `cd ${HOME}/work/proj-g/.claude/worktrees/feature && claude --resume u-live`,
-  'resumeCmd=' + byId['u-live'].resumeCmd
+console.log('IDE fingerprint (last resort, pre-entrypoint transcript):');
+eq('no entrypoint + IDE marker -> IDE', byId['u-ancient'].origin, 'IDE');
+eq('  ...flagged inferred', byId['u-ancient'].originSource, 'inferred');
+
+console.log('moved environments (first vs last entrypoint):');
+eq('origin = birth (Terminal)', byId['u-moved'].origin, 'Terminal');
+eq('lastOpenedIn = VSCode', byId['u-moved'].lastOpenedIn, 'VSCode');
+eq('movedEnvironments flag set', byId['u-moved'].movedEnvironments, true);
+eq('non-moved session not flagged', byId['u-term'].movedEnvironments, false);
+
+console.log('live-cwd resume + deep link:');
+eq(
+  'resume targets live cwd',
+  byId['u-live'].resumeCmd,
+  `cd ${HOME}/work/i/.claude/worktrees/feature && claude --resume u-live`
 );
+eq('vscode deep link present', byId['u-live'].vscodeLink, 'vscode://anthropic.claude-code/open?session=u-live');
 
-console.log('transcript fingerprint:');
-eq('inferred origin source flagged', byId['u-ide'].originSource, 'inferred');
-eq('inferred -> IDE label', byId['u-ide'].origin, 'IDE');
-eq('plain terminal not mislabeled IDE', byId['u-terminal'].origin, 'Terminal');
-
-console.log('origin persistence cache:');
-eq('live session is Terminal (source=entrypoint)', byId['u-cacheme'].origin, 'Terminal');
-eq('  ...sourced live', byId['u-cacheme'].originSource, 'entrypoint');
-// Simulate closing the session: delete its registry entry, then re-read.
-fs.rmSync(path.join(SESSIONS, 'u-cacheme.json'));
-const afterClose = Object.fromEntries(run({ CC_SESSIONS_RULES: RULES_FILE }).map((s) => [s.uuid, s]));
-eq('closed session keeps origin via cache', afterClose['u-cacheme'].origin, 'Terminal');
-eq('  ...now sourced from cache', afterClose['u-cacheme'].originSource, 'cache');
-
-console.log('without user rules (precedence sanity):');
-const noRules = Object.fromEntries(run({ CC_SESSIONS_RULES: path.join(ROOT, 'none.json') }).map((s) => [s.uuid, s]));
-eq('acme falls back to Terminal when no rule', noRules['u-acme'].origin, 'Terminal');
-
-// ── result ───────────────────────────────────────────────────────────────────────
 console.log(`\n${pass} passed, ${fail} failed`);
 fs.rmSync(ROOT, { recursive: true, force: true });
 process.exit(fail ? 1 : 0);

@@ -6,6 +6,28 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-01
+
+### Added
+- **Durable origin from the transcript.** `entrypoint` is stamped into the transcript and
+  accumulates across resumes, so origin now survives a session closing — no cache needed. Reads
+  the first stamp (`origin`, birth) from the head and the last (`lastOpenedIn`) from the tail.
+- **"Moved environments"** detection: when birth and most-recent entrypoints differ (e.g. born
+  in Terminal, last opened in VSCode), the HTML shows `→ VSCode` and `--json` sets
+  `movedEnvironments: true`. New `--json` fields: `lastOpenedIn`, `movedEnvironments`, `liveEntrypoint`.
+- **`vscode://` deep-link button** ("copy vscode") in the HTML report, alongside "copy resume".
+- GitHub Actions CI: `node --check` + the test suite on Node 18/20/22.
+
+### Changed
+- Origin ladder is now: user rules → `~/.<tool>/` path → transcript/live entrypoint →
+  IDE-marker fallback → `—`. On a real 87-session machine, unknown origins dropped from 55 to 2
+  (only the two transcripts predating the entrypoint stamp).
+
+### Removed
+- The origin-persistence cache (`lib/cache.js`, `$CC_SESSIONS_CACHE`) — redundant now that the
+  transcript carries `entrypoint` durably. It was built on the mistaken belief that entrypoint
+  lived only in the (liveness-only) process registry.
+
 ## [0.2.0] - 2026-05-29
 
 ### Added
@@ -47,6 +69,7 @@ First public release.
   (`lib/transcript.js`, `lib/registry.js`); see `docs/claude-code-internals.md`.
 - Zero-dependency integration test suite (`test/run.js`).
 
-[Unreleased]: https://github.com/afinetooth/cc-sessions/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/afinetooth/cc-sessions/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/afinetooth/cc-sessions/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/afinetooth/cc-sessions/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/afinetooth/cc-sessions/releases/tag/v0.1.0
