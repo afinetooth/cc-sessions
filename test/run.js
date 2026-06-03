@@ -51,8 +51,8 @@ function makeSession({ uuid, cwd, content, registryEntrypoint, transcriptEntrypo
   }
 }
 
-function run(extraEnv) {
-  const out = execFileSync('node', [BIN, '--json'], {
+function run(extraEnv, extraArgs) {
+  const out = execFileSync('node', [BIN, '--json', ...(extraArgs || [])], {
     env: { ...process.env, CLAUDE_CONFIG_DIR: CFG, ...extraEnv },
     encoding: 'utf8',
   });
@@ -123,6 +123,12 @@ makeSession({
   content: 'live',
 });
 
+// 11. ACTIVE: registry marker whose pid is a real running process (this test's own pid).
+makeSession({ uuid: 'u-active', cwd: HOME + '/work/j', registryEntrypoint: 'cli', pid: process.pid, content: 'running' });
+
+// 12. ORPHANED marker: a registry file exists but its pid is dead -> NOT active (honesty case).
+makeSession({ uuid: 'u-orphan', cwd: HOME + '/work/k', registryEntrypoint: 'cli', pid: 2147483646, content: 'dead' });
+
 const byId = Object.fromEntries(run({ CC_SESSIONS_RULES: RULES_FILE }).map((s) => [s.uuid, s]));
 
 console.log('origin detection (durable, from the transcript):');
@@ -147,6 +153,17 @@ eq('origin = birth (Terminal)', byId['u-moved'].origin, 'Terminal');
 eq('lastOpenedIn = VSCode', byId['u-moved'].lastOpenedIn, 'VSCode');
 eq('movedEnvironments flag set', byId['u-moved'].movedEnvironments, true);
 eq('non-moved session not flagged', byId['u-term'].movedEnvironments, false);
+
+console.log('active (live-process probe):');
+eq('live pid -> active', byId['u-active'].active, true);
+eq('orphaned marker (dead pid) -> not active', byId['u-orphan'].active, false);
+eq('no registry -> not active', byId['u-term'].active, false);
+eq('active session carries its pid', byId['u-active'].pid, process.pid);
+
+console.log('--active filter:');
+const activeOnly = run({ CC_SESSIONS_RULES: RULES_FILE }, ['--active']);
+eq('--active returns only the live session', activeOnly.length, 1);
+eq('  ...and it is u-active', activeOnly[0] && activeOnly[0].uuid, 'u-active');
 
 console.log('live-cwd resume + deep link:');
 eq(

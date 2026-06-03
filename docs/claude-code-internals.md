@@ -44,6 +44,10 @@ exits; it is **not** aged out or pruned on a timer. (Verified: every registry fi
 machine corresponded to a live `claude` PID, including sessions idle for weeks; many *recent*
 but closed sessions had none.) Fields we read:
 
+- **`<pid>` (the filename)** — the OS process id. We parse it from the filename and probe it
+  with a no-op `kill(pid, 0)` to decide whether a session is *active*. Trusting the file's mere
+  existence isn't enough: a process killed with `SIGKILL` (or that crashes) can't remove its own
+  marker, leaving an **orphaned** file that would otherwise read as alive.
 - **`sessionId`** — joins a registry entry to a transcript UUID.
 - **`entrypoint`** — the launch surface (`cli`, `claude-vscode`). This is the *live/current*
   copy of the same value the transcript stamps; we use it only as a fallback to the transcript.
