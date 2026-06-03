@@ -24,6 +24,7 @@ Usage:
   cc-sessions --grep "WAYVE"        Filter by first-prompt / summary / cwd (case-insensitive)
   cc-sessions --cwd coveralls       Filter by cwd slug (substring)
   cc-sessions --since 2026-05-01    Only sessions modified on/after date
+  cc-sessions --active              Only sessions running right now (live process)
   cc-sessions --html                Generate HTML report and open in browser
   cc-sessions --json                JSON output (for scripts)
   cc-sessions --resume              Interactive fzf picker; prints resume command
@@ -39,6 +40,7 @@ function parseArgs(argv) {
     grep: null,
     cwdFilter: null,
     since: null,
+    activeOnly: false,
     format: 'table',
     resume: false,
   };
@@ -48,6 +50,7 @@ function parseArgs(argv) {
     else if (a === '--grep') opts.grep = argv[++i];
     else if (a === '--cwd') opts.cwdFilter = argv[++i];
     else if (a === '--since') opts.since = new Date(argv[++i]);
+    else if (a === '--active') opts.activeOnly = true;
     else if (a === '--html') opts.format = 'html';
     else if (a === '--json') opts.format = 'json';
     else if (a === '--resume') opts.resume = true;

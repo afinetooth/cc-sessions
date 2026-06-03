@@ -55,6 +55,7 @@ cc-sessions --limit 30            Show top 30
 cc-sessions --grep "WAYVE"        Filter by first-prompt / summary / cwd / uuid
 cc-sessions --cwd coveralls       Filter by cwd slug (substring)
 cc-sessions --since 2026-05-01    Only sessions modified on/after a date
+cc-sessions --active              Only sessions running right now (live process)
 cc-sessions --html                Generate HTML report and open in browser
 cc-sessions --json                JSON output (for scripts)
 cc-sessions --resume              Interactive fzf picker; prints a resume command
@@ -64,6 +65,17 @@ cc-sessions --help                Help
 Each invocation re-scans the filesystem, so it always reflects current state.
 
 In the HTML report, every row has two copy buttons: **copy resume** (a `cd … && claude --resume <uuid>` command for the terminal) and **copy vscode** (a `vscode://anthropic.claude-code/open?session=<uuid>` deep link that opens the session in the VS Code extension — open the session's project folder in VS Code first, since the extension scopes sessions to the open workspace).
+
+## Active sessions
+
+Most of what you see is **history** — every transcript Claude Code has ever written stays on disk forever. A small subset is **active**: a `claude` process is running for it right now. cc-sessions tells them apart:
+
+- the HTML report has a sortable/filterable **Status** column with a green `● live` badge (and an *N active* count in the header — filter the search box by `live`),
+- the terminal table prefixes live rows with `●` and reports `(N active)`,
+- `--json` adds `active` (boolean) and `pid`,
+- `cc-sessions --active` lists only the running ones.
+
+Liveness is **probed, not assumed**: a session counts as active only if its process id is actually running. Claude Code drops a marker file per process and removes it on exit, but a process that's killed hard (or crashes) can leave the marker behind — cc-sessions checks the pid (a no-op signal-0 probe) so an orphaned marker doesn't read as alive.
 
 ## Origin detection
 

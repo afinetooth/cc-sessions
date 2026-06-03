@@ -6,6 +6,21 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-03
+
+### Added
+- **Active-session indicator.** Each session now shows whether a Claude process is running for
+  it right now. The HTML report gains a sortable/filterable **Status** column with a green
+  `● live` badge and an active count in the header; the terminal table prefixes live rows with
+  `●` and reports `(N active)`; `--json` gains `active` (boolean) and `pid`.
+- **`--active` filter** — list only sessions with a live process (e.g. `cc-sessions --active`).
+
+### Changed
+- Liveness is **probed**, not assumed: a session is "active" only if its registry pid is a real
+  running process (signal-0 check). An orphaned marker left by a hard-killed/crashed process
+  (which never removed its own file) correctly reads as **not active**.
+- Docs/comments: the process registry is described consistently as a liveness marker keyed by pid.
+
 ## [0.3.0] - 2026-06-01
 
 ### Added
@@ -69,7 +84,8 @@ First public release.
   (`lib/transcript.js`, `lib/registry.js`); see `docs/claude-code-internals.md`.
 - Zero-dependency integration test suite (`test/run.js`).
 
-[Unreleased]: https://github.com/afinetooth/cc-sessions/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/afinetooth/cc-sessions/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/afinetooth/cc-sessions/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/afinetooth/cc-sessions/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/afinetooth/cc-sessions/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/afinetooth/cc-sessions/releases/tag/v0.1.0
