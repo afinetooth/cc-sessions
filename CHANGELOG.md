@@ -6,6 +6,13 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-04
+
+### Added
+- **`--oneline`** — compact one-line-per-session output (live-marker · uuid · pid · origin ·
+  first prompt), no header/footer, first prompt truncated to terminal width. Built for piping
+  and quick scanning (`cc-sessions --active --oneline | grep …`). Composes with all filters.
+
 ## [0.4.0] - 2026-06-03
 
 ### Added
@@ -84,7 +91,8 @@ First public release.
   (`lib/transcript.js`, `lib/registry.js`); see `docs/claude-code-internals.md`.
 - Zero-dependency integration test suite (`test/run.js`).
 
-[Unreleased]: https://github.com/afinetooth/cc-sessions/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/afinetooth/cc-sessions/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/afinetooth/cc-sessions/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/afinetooth/cc-sessions/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/afinetooth/cc-sessions/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/afinetooth/cc-sessions/compare/v0.1.0...v0.2.0

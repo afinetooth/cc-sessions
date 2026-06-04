@@ -59,6 +59,14 @@ function run(extraEnv, extraArgs) {
   return JSON.parse(out);
 }
 
+// Raw (non-JSON) CLI output, for asserting human-facing formats like --oneline.
+function runRaw(extraEnv, extraArgs) {
+  return execFileSync('node', [BIN, ...(extraArgs || [])], {
+    env: { ...process.env, CLAUDE_CONFIG_DIR: CFG, ...extraEnv },
+    encoding: 'utf8',
+  });
+}
+
 let pass = 0;
 let fail = 0;
 function eq(name, got, want) {
@@ -164,6 +172,13 @@ console.log('--active filter:');
 const activeOnly = run({ CC_SESSIONS_RULES: RULES_FILE }, ['--active']);
 eq('--active returns only the live session', activeOnly.length, 1);
 eq('  ...and it is u-active', activeOnly[0] && activeOnly[0].uuid, 'u-active');
+
+console.log('--oneline format:');
+const ol = runRaw({ CC_SESSIONS_RULES: RULES_FILE }, ['--oneline']);
+const olLines = ol.trim().split('\n');
+eq('one line per session (no header/footer)', olLines.length, Object.keys(byId).length);
+eq('active row marked ● + carries pid', new RegExp('●.*u-active.*' + process.pid).test(ol), true);
+eq('inactive row has no ● marker', /^\s+u-term\b/m.test(ol), true);
 
 console.log('live-cwd resume + deep link:');
 eq(
