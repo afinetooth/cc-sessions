@@ -134,6 +134,13 @@ These are isolated in [`lib/transcript.js`](lib/transcript.js) and [`lib/registr
 
 Set `$CLAUDE_CONFIG_DIR` to point at a non-default Claude Code data directory.
 
+## Roadmap
+
+Possible future work — contributions welcome:
+
+- **Hide subagent sessions by default.** Sub-agent transcripts (`agent-*.jsonl`, the side-chains Claude Code spawns within a turn) are listed alongside top-level sessions today. A flag to hide them by default (e.g. `--all` to opt back in) would de-clutter the common view.
+- **Anthropic documentation PR.** [`docs/claude-code-internals.md`](docs/claude-code-internals.md) is written as a seed for proposing that Claude Code officially document the transcript and process-registry formats this tool depends on, so they stop being undocumented internals.
+
 ## License
 
 MIT © James Kessler
