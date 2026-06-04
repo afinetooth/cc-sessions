@@ -14,6 +14,7 @@ const { collect, applyFilters } = require('../lib/sessions');
 const { renderJson } = require('../lib/render/json');
 const { renderTable } = require('../lib/render/table');
 const { renderHtml } = require('../lib/render/html');
+const { renderOneline } = require('../lib/render/oneline');
 
 const HELP = `
 cc-sessions — inventory & search Claude Code sessions
@@ -25,6 +26,7 @@ Usage:
   cc-sessions --cwd coveralls       Filter by cwd slug (substring)
   cc-sessions --since 2026-05-01    Only sessions modified on/after date
   cc-sessions --active              Only sessions running right now (live process)
+  cc-sessions --oneline             Compact one-line-per-session output (pipe-friendly)
   cc-sessions --html                Generate HTML report and open in browser
   cc-sessions --json                JSON output (for scripts)
   cc-sessions --resume              Interactive fzf picker; prints resume command
@@ -51,6 +53,7 @@ function parseArgs(argv) {
     else if (a === '--cwd') opts.cwdFilter = argv[++i];
     else if (a === '--since') opts.since = new Date(argv[++i]);
     else if (a === '--active') opts.activeOnly = true;
+    else if (a === '--oneline') opts.format = 'oneline';
     else if (a === '--html') opts.format = 'html';
     else if (a === '--json') opts.format = 'json';
     else if (a === '--resume') opts.resume = true;
@@ -74,6 +77,11 @@ function main() {
 
   if (opts.format === 'json') {
     console.log(renderJson(filtered));
+    return;
+  }
+
+  if (opts.format === 'oneline') {
+    console.log(renderOneline(all, filtered));
     return;
   }
 
